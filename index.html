@@ -15,11 +15,21 @@
 
         // 設定 Firebase Debug Log
         setLogLevel('debug');
-
+            
         // 全域變數初始化 (由 Canvas 環境提供)
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCsZBXs8-nDan47tQIzseRtlRGf284RXTw",
+            authDomain: "ymjh1141.firebaseapp.com",
+            projectId: "ymjh1141",
+            storageBucket: "ymjh1141.firebasestorage.app",
+            messagingSenderId: "142499425515",
+            appId: "1:142499425515:web:4c296d7e7df16cb656e2ae",
+            measurementId: "G-H64DSGHYBT"
+        };
 
         let db, auth;
         let unsubscribeStudentData = null; // 用於取消訂閱
