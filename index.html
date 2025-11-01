@@ -1,0 +1,891 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>學生線上成績查詢系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // 設定 Firebase Debug Log
+        setLogLevel('debug');
+
+        // 全域變數初始化 (由 Canvas 環境提供)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db, auth;
+        let unsubscribeStudentData = null; // 用於取消訂閱
+        let currentUserId = null;
+
+        // 學生資料的初始化結構 (包含成績和密碼) - 移除了不使用的 'Rank' 屬性
+        const initialStudentData = [
+            { studentId: '1', password: '853012', Chinese: 63, Math: 97, English: 54, Science: 87, Social: 96, Writing: 2, WeightedAvg: 78.6, ClassRank: 7 },
+            { studentId: '2', password: '719468', Chinese: 96, Math: 64, English: 50, Science: 82, Social: 66, Writing: 4, WeightedAvg: 73.9, ClassRank: 16 },
+            { studentId: '3', password: '205374', Chinese: 83, Math: 73, English: 64, Science: 68, Social: 58, Writing: 6, WeightedAvg: 70.9, ClassRank: 22 },
+            { studentId: '4', password: '628905', Chinese: 51, Math: 65, English: 92, Science: 98, Social: 79, Writing: 4, WeightedAvg: 73.4, ClassRank: 17 },
+            { studentId: '5', password: '471396', Chinese: 86, Math: 69, English: 64, Science: 97, Social: 92, Writing: 3, WeightedAvg: 81.4, ClassRank: 4 },
+            { studentId: '6', password: '185203', Chinese: 55, Math: 70, English: 99, Science: 58, Social: 78, Writing: 5, WeightedAvg: 70.0, ClassRank: 23 },
+            { studentId: '7', password: '930641', Chinese: 62, Math: 95, English: 99, Science: 56, Social: 68, Writing: 6, WeightedAvg: 75.5, ClassRank: 12 },
+            { studentId: '8', password: '547120', Chinese: 80, Math: 89, English: 93, Science: 90, Social: 80, Writing: 4, WeightedAvg: 85.8, ClassRank: 3 },
+            { studentId: '9', password: '362859', Chinese: 94, Math: 97, English: 83, Science: 79, Social: 86, Writing: 2, WeightedAvg: 89.0, ClassRank: 1 },
+            { studentId: '10', password: '091734', Chinese: 66, Math: 67, English: 95, Science: 50, Social: 91, Writing: 4, WeightedAvg: 72.6, ClassRank: 20 },
+            { studentId: '11', password: '258047', Chinese: 91, Math: 76, English: 73, Science: 89, Social: 84, Writing: 2, WeightedAvg: 83.2, ClassRank: 5 },
+            { studentId: '12', password: '703192', Chinese: 73, Math: 81, English: 92, Science: 100, Social: 87, Writing: 6, WeightedAvg: 84.8, ClassRank: 4 },
+            { studentId: '13', password: '486510', Chinese: 72, Math: 69, English: 53, Science: 57, Social: 52, Writing: 4, WeightedAvg: 62.3, ClassRank: 29 },
+            { studentId: '14', password: '159273', Chinese: 51, Math: 68, English: 94, Science: 81, Social: 50, Writing: 4, WeightedAvg: 66.8, ClassRank: 27 },
+            { studentId: '15', password: '602384', Chinese: 60, Math: 77, English: 61, Science: 70, Social: 93, Writing: 4, WeightedAvg: 71.1, ClassRank: 21 },
+            { studentId: '16', password: '827409', Chinese: 62, Math: 99, English: 89, Science: 75, Social: 53, Writing: 2, WeightedAvg: 75.4, ClassRank: 13 },
+            { studentId: '17', password: '394516', Chinese: 53, Math: 73, English: 60, Science: 61, Social: 64, Writing: 5, WeightedAvg: 61.8, ClassRank: 30 },
+            { studentId: '18', password: '016825', Chinese: 78, Math: 71, English: 91, Science: 77, Social: 74, Writing: 2, WeightedAvg: 77.8, ClassRank: 10 },
+            { studentId: '19', password: '573940', Chinese: 61, Math: 95, English: 50, Science: 99, Social: 60, Writing: 3, WeightedAvg: 72.9, ClassRank: 19 },
+            { studentId: '20', password: '948153', Chinese: 85, Math: 82, English: 59, Science: 80, Social: 58, Writing: 3, WeightedAvg: 74.7, ClassRank: 14 },
+            { studentId: '21', password: '231678', Chinese: 59, Math: 96, English: 85, Science: 79, Social: 64, Writing: 4, WeightedAvg: 75.7, ClassRank: 11 },
+            { studentId: '22', password: '784905', Chinese: 93, Math: 72, English: 80, Science: 89, Social: 71, Writing: 3, WeightedAvg: 81.8, ClassRank: 6 },
+            { studentId: '23', password: '410526', Chinese: 93, Math: 51, English: 66, Science: 63, Social: 50, Writing: 4, WeightedAvg: 67.0, ClassRank: 26 },
+            { studentId: '24', password: '195738', Chinese: 77, Math: 79, English: 60, Science: 51, Social: 69, Writing: 5, WeightedAvg: 68.9, ClassRank: 25 },
+            { studentId: '25', password: '637891', Chinese: 57, Math: 84, English: 65, Science: 79, Social: 87, Writing: 3, WeightedAvg: 73.0, ClassRank: 18 },
+            { studentId: '26', password: '809245', Chinese: 89, Math: 85, English: 74, Science: 91, Social: 90, Writing: 6, WeightedAvg: 86.1, ClassRank: 2 },
+            { studentId: '27', password: '352167', Chinese: 60, Math: 86, English: 86, Science: 89, Social: 90, Writing: 3, WeightedAvg: 79.9, ClassRank: 8 },
+            { studentId: '28', password: '064389', Chinese: 60, Math: 84, English: 86, Science: 87, Social: 59, Writing: 3, WeightedAvg: 74.0, ClassRank: 15 },
+            { studentId: '29', password: '597014', Chinese: 51, Math: 74, English: 55, Science: 92, Social: 89, Writing: 5, WeightedAvg: 69.9, ClassRank: 24 },
+            { studentId: '30', password: '912463', Chinese: 54, Math: 53, English: 67, Science: 68, Social: 88, Writing: 2, WeightedAvg: 63.9, ClassRank: 28 },
+            // 導師測試帳號 (座號 N/A, 密碼 000000)
+            { studentId: '導師測試', password: '000000', Chinese: 92, Math: 85, English: 75, Science: 67, Social: 85, Writing: 3, WeightedAvg: 82.28, ClassRank: 'N/A' }
+        ];
+
+        // 將資料轉換為以密碼為鍵的 Map 方便查詢
+        const passwordMap = initialStudentData.reduce((map, student) => {
+            map[student.password] = student.studentId;
+            return map;
+        }, {});
+
+        // 初始化 Firebase 和認證
+        if (firebaseConfig) {
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+
+            async function initializeAuth() {
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                    currentUserId = auth.currentUser?.uid || crypto.randomUUID();
+                    console.log("Firebase Auth Initialized. User ID:", currentUserId);
+                    initializeDataAndListener();
+                } catch (error) {
+                    console.error("Firebase Authentication failed:", error);
+                    initializeDataAndListener();
+                }
+            }
+            initializeAuth();
+        } else {
+             // 非 Canvas 環境下運行，模擬數據載入
+            console.warn("Firebase config missing. Running in simulated mode.");
+        }
+
+
+        let allStudentData = initialStudentData; // 儲存所有學生資料
+        let currentStudent = null; // 儲存當前登入的學生資料
+
+        // Firestore 集合路徑
+        const collectionPath = `artifacts/${appId}/public/data/student_grades`;
+        const initialDataDocPath = doc(db, collectionPath, 'initial_data');
+
+        // 科目列表和標籤
+        const mainSubjects = ['Chinese', 'Math', 'English', 'Science', 'Social'];
+        const allSubjects = ['Chinese', 'Math', 'English', 'Science', 'Social', 'Writing'];
+        const subjectLabels = {
+            'Chinese': '國文',
+            'Math': '數學',
+            'English': '英文',
+            'Science': '自然',
+            'Social': '社會',
+            'Writing': '寫作'
+        };
+
+
+        // --- 科目排名計算函式 (已修正，確保所有科目排名屬性正確生成) ---
+        function calculateSubjectRanks(students) {
+            // subjectsToRank 包含所有單科和總平均
+            const subjectsToRank = allSubjects.concat(['WeightedAvg']);
+            
+            // 1. 篩選出需要排名的學生並進行淺複製
+            let rankableStudents = students
+                .filter(s => s.studentId !== '導師測試')
+                .map(s => ({ ...s }));
+
+            const totalStudents = rankableStudents.length;
+
+            if (totalStudents === 0) return students.map(s => ({...s})); // 安全返回
+
+            subjectsToRank.forEach(subject => {
+                // 依據當前科目分數降冪排序
+                rankableStudents.sort((a, b) => b[subject] - a[subject]);
+
+                // *** 確保排名欄位名稱的明確性 ***
+                const rankFieldName = (subject === 'WeightedAvg') ? 'ClassRank' : `${subject}Rank`;
+                
+                // 分配排名，處理同分情況
+                for (let i = 0; i < totalStudents; i++) {
+                    if (i > 0 && rankableStudents[i][subject] === rankableStudents[i-1][subject]) {
+                        // 同分者使用相同排名
+                        rankableStudents[i][rankFieldName] = rankableStudents[i-1][rankFieldName];
+                    } else {
+                        // 否則排名為當前位置 + 1
+                        rankableStudents[i][rankFieldName] = i + 1;
+                    }
+                }
+            });
+
+            // 2. 將計算後的排名合併回完整的學生列表 (確保每個物件都是新物件)
+            const updatedStudents = students.map(s => {
+                const student = { ...s }; // 創建新的學生物件副本
+
+                if (student.studentId === '導師測試') {
+                    // 導師帳號設定為 N/A
+                    subjectsToRank.forEach(subject => {
+                        const rankFieldName = (subject === 'WeightedAvg') ? 'ClassRank' : `${subject}Rank`;
+                        student[rankFieldName] = 'N/A';
+                    });
+                    return student;
+                }
+
+                // 找到已排名的版本並將新屬性合併
+                const rankedStudent = rankableStudents.find(rs => rs.studentId === student.studentId);
+                
+                if (rankedStudent) {
+                    subjectsToRank.forEach(subject => {
+                        const rankFieldName = (subject === 'WeightedAvg') ? 'ClassRank' : `${subject}Rank`;
+                        student[rankFieldName] = rankedStudent[rankFieldName];
+                    });
+                }
+                return student;
+            });
+
+            return updatedStudents;
+        }
+
+        // --- Firebase 資料初始化和監聽 ---
+        async function initializeDataAndListener() {
+            if (!db) {
+                // 非 Firebase 環境下，也先計算排名
+                allStudentData = calculateSubjectRanks(initialStudentData);
+                return;
+            }
+
+            // 1. 檢查並初始化資料
+            const docSnap = await getDoc(initialDataDocPath);
+            if (!docSnap.exists()) {
+                console.log("Initializing student data in Firestore...");
+                const dataToStore = JSON.stringify(initialStudentData);
+                await setDoc(initialDataDocPath, { data: dataToStore });
+                allStudentData = calculateSubjectRanks(initialStudentData);
+                console.log("Data initialized successfully.");
+            } else {
+                console.log("Data already exists in Firestore.");
+            }
+
+            // 2. 設定即時監聽 (onSnapshot)
+            unsubscribeStudentData = onSnapshot(initialDataDocPath, (doc) => {
+                const data = doc.data();
+                if (data && data.data) {
+                    let rawData = JSON.parse(data.data);
+                    // NEW: Calculate and store subject ranks
+                    allStudentData = calculateSubjectRanks(rawData);
+                    console.log("Real-time student data updated and ranks recalculated.");
+
+                    // 如果學生已經登入，重新渲染圖表
+                    if (currentStudent) {
+                        const updatedStudent = allStudentData.find(s => s.password === currentStudent.password);
+                        if (updatedStudent) {
+                            currentStudent = updatedStudent;
+                            renderDashboard(currentStudent);
+                        }
+                    }
+                }
+            }, (error) => {
+                console.error("Error listening to student data:", error);
+            });
+        }
+
+
+        // --- UI 和 互動邏輯 ---
+
+        // 登入邏輯
+        window.handleLogin = function() {
+            const passwordInput = document.getElementById('password-input');
+            const password = passwordInput.value.trim();
+            const loginError = document.getElementById('login-error');
+
+            const studentId = passwordMap[password];
+            if (studentId) {
+                // 從計算過排名的 allStudentData 中獲取學生資料
+                const student = allStudentData.find(s => s.password === password);
+                if (student) {
+                    currentStudent = student;
+                    loginError.classList.add('hidden');
+                    // 隱藏登入畫面並顯示儀表板，同時添加動畫類
+                    document.getElementById('login-screen').classList.add('animate-fade-out');
+                    document.getElementById('dashboard').classList.add('animate-fade-in-up', 'delay-200ms');
+                    setTimeout(() => {
+                        document.getElementById('login-screen').classList.add('hidden');
+                        document.getElementById('dashboard').classList.remove('hidden');
+                        document.getElementById('login-screen').classList.remove('animate-fade-out'); // 清理動畫類
+                        document.getElementById('dashboard').classList.remove('animate-fade-in-up', 'delay-200ms');
+                        renderDashboard(student);
+                    }, 300); // 動畫時間後執行
+                    return;
+                }
+            }
+
+            loginError.textContent = "密碼錯誤，請重新輸入。";
+            loginError.classList.remove('hidden');
+        }
+
+        // 登出邏輯
+        window.handleLogout = function() {
+            currentStudent = null;
+            document.getElementById('dashboard').classList.add('animate-fade-out');
+            document.getElementById('login-screen').classList.add('animate-fade-in-up', 'delay-200ms');
+            setTimeout(() => {
+                document.getElementById('dashboard').classList.add('hidden');
+                document.getElementById('login-screen').classList.remove('hidden');
+                document.getElementById('password-input').value = '';
+                document.getElementById('login-error').classList.add('hidden');
+                document.getElementById('dashboard').classList.remove('animate-fade-out');
+                document.getElementById('login-screen').classList.remove('animate-fade-in-up', 'delay-200ms');
+            }, 300); // 動畫時間後執行
+        }
+
+        // 切換儀表板分頁
+        let currentTab = 'overview'; // 'overview' or 'analysis'
+        window.changeTab = function(tab) {
+            currentTab = tab;
+            document.getElementById('overview-tab-btn').classList.remove('bg-blue-500', 'text-white');
+            document.getElementById('analysis-tab-btn').classList.remove('bg-blue-500', 'text-white');
+            document.getElementById('overview-tab-btn').classList.add('text-blue-500', 'hover:bg-blue-100');
+            document.getElementById('analysis-tab-btn').classList.add('text-blue-500', 'hover:bg-blue-100');
+
+            document.getElementById(`${tab}-tab-btn`).classList.add('bg-blue-500', 'text-white');
+            document.getElementById(`${tab}-tab-btn`).classList.remove('text-blue-500', 'hover:bg-blue-100');
+
+            // 添加淡出動畫
+            const currentContent = document.getElementById(`${currentTab === 'overview' ? 'analysis' : 'overview'}-content`);
+            if (!currentContent.classList.contains('hidden')) {
+                currentContent.classList.add('animate-fade-out-fast');
+                setTimeout(() => {
+                    currentContent.classList.add('hidden');
+                    currentContent.classList.remove('animate-fade-out-fast');
+                    showNewTabContent(tab);
+                }, 150); // 快速淡出時間
+            } else {
+                showNewTabContent(tab);
+            }
+        }
+
+        function showNewTabContent(tab) {
+            const newContent = document.getElementById(`${tab}-content`);
+            newContent.classList.remove('hidden');
+            newContent.classList.add('animate-fade-in-fast'); // 淡入動畫
+
+            // 重新繪製圖表以適應新分頁的尺寸
+            if (currentStudent) {
+                if (tab === 'overview') {
+                    renderOverviewCharts(currentStudent);
+                } else if (tab === 'analysis') {
+                    // 初始化選擇國文科目
+                    document.getElementById('subject-select').value = 'Chinese';
+                    renderAnalysisCharts(currentStudent, 'Chinese');
+                }
+            }
+
+            setTimeout(() => {
+                newContent.classList.remove('animate-fade-in-fast'); // 清理動畫類
+            }, 150);
+        }
+
+        // 繪製儀表板
+        function renderDashboard(student) {
+            document.getElementById('student-info').textContent = student.studentId !== '導師測試' ? `座號 ${student.studentId} 同學` : '導師測試帳號';
+            changeTab(currentTab); // 初始化顯示當前分頁內容
+            // 為統計卡片添加動畫
+            document.querySelectorAll('#overview-content > div:first-child > div > div').forEach((card, index) => {
+                card.classList.add('animate-fade-in-up');
+                card.style.animationDelay = `${index * 100}ms`;
+            });
+        }
+
+        // --- 圖表繪製 ---
+
+        let personalRadarChart, writingDistChart, weightedScatterChart, analysisRadarChart, subjectDistChart;
+
+        function calculateClassAverage() {
+            // 排除導師測試帳號的成績計算班級平均
+            const filteredData = allStudentData.filter(s => s.studentId !== '導師測試');
+            if (filteredData.length === 0) return { Chinese: 0, Math: 0, English: 0, Science: 0, Social: 0 };
+            const sum = filteredData.reduce((acc, s) => {
+                acc.Chinese += s.Chinese;
+                acc.Math += s.Math;
+                acc.English += s.English;
+                acc.Science += s.Science;
+                acc.Social += s.Social;
+                return acc;
+            }, { Chinese: 0, Math: 0, English: 0, Science: 0, Social: 0 });
+
+            const count = filteredData.length;
+            return {
+                Chinese: (sum.Chinese / count).toFixed(2),
+                Math: (sum.Math / count).toFixed(2),
+                English: (sum.English / count).toFixed(2),
+                Science: (sum.Science / count).toFixed(2),
+                Social: (sum.Social / count).toFixed(2)
+            };
+        }
+
+        function renderOverviewCharts(student) {
+            const classAverage = allStudentData
+                .filter(s => s.studentId !== '導師測試')
+                .reduce((sum, s) => sum + s.WeightedAvg, 0) / (allStudentData.length - 1);
+
+            // 更新統計卡片
+            document.getElementById('overall-avg').textContent = student.WeightedAvg.toFixed(2);
+            document.getElementById('class-avg-stat').textContent = classAverage.toFixed(2);
+            // 確保班級排名使用的是 ClassRank
+            document.getElementById('rank-stat').textContent = student.ClassRank;
+
+            // 1. 個人成績雷達圖 (Personal Radar Chart)
+            const personalData = mainSubjects.map(sub => student[sub]);
+            const classAvgData = mainSubjects.map(sub => calculateClassAverage()[sub]);
+
+            if (personalRadarChart) personalRadarChart.destroy();
+            personalRadarChart = new Chart(document.getElementById('personal-radar-chart'), {
+                type: 'radar',
+                data: {
+                    labels: mainSubjects.map(sub => subjectLabels[sub]),
+                    datasets: [
+                        {
+                            label: '個人成績',
+                            data: personalData,
+                            borderColor: 'rgba(59, 130, 246, 1)', // blue-500
+                            backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                            pointBackgroundColor: 'rgba(59, 130, 246, 1)',
+                        },
+                        {
+                            label: '班級平均',
+                            data: classAvgData,
+                            borderColor: 'rgba(239, 68, 68, 1)', // red-500
+                            backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                            pointBackgroundColor: 'rgba(239, 68, 68, 1)',
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        r: {
+                            angleLines: { color: 'rgba(200, 200, 200, 0.5)' },
+                            suggestedMin: 0,
+                            suggestedMax: 100,
+                            pointLabels: { font: { size: 14 } },
+                            ticks: { backdropColor: 'rgba(240, 249, 255, 1)' } // sky-100
+                        }
+                    },
+                    plugins: { legend: { position: 'top' } }
+                }
+            });
+
+            // 2. 寫作分佈 (Writing Distribution)
+            const writingCounts = allStudentData.reduce((counts, s) => {
+                // 僅計算有排名的學生 (排除 N/A)
+                if (s.ClassRank !== 'N/A') {
+                    counts[s.Writing] = (counts[s.Writing] || 0) + 1;
+                }
+                return counts;
+            }, {});
+            const writingLabels = ['2級', '3級', '4級', '5級', '6級'];
+            const writingData = writingLabels.map(label => writingCounts[parseInt(label.charAt(0))] || 0);
+
+            if (writingDistChart) writingDistChart.destroy();
+            writingDistChart = new Chart(document.getElementById('writing-dist-chart'), {
+                type: 'bar',
+                data: {
+                    labels: writingLabels,
+                    datasets: [{
+                        label: '學生人數',
+                        data: writingData,
+                        backgroundColor: writingLabels.map(label => label === `${student.Writing}級` ? 'rgba(59, 130, 246, 0.8)' : 'rgba(147, 197, 253, 0.6)'), // blue-500/sky-300
+                        borderColor: 'rgba(59, 130, 246, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { beginAtZero: true, title: { display: true, text: '學生人數 (人)' } },
+                        x: { title: { display: true, text: '作文等級' } }
+                    }
+                }
+            });
+
+            // 3. 加權平均分數散佈圖 (Weighted Avg Scatter/Distribution)
+            const weightedData = allStudentData
+                .filter(s => s.studentId !== '導師測試') // 排除測試帳號
+                .map(s => ({ x: s.WeightedAvg, y: s.ClassRank }));
+            const studentPoint = { x: student.WeightedAvg, y: student.ClassRank };
+
+            if (weightedScatterChart) weightedScatterChart.destroy();
+            weightedScatterChart = new Chart(document.getElementById('weighted-scatter-chart'), {
+                type: 'scatter',
+                data: {
+                    datasets: [
+                        {
+                            label: '班級學生',
+                            data: weightedData,
+                            backgroundColor: 'rgba(59, 130, 246, 0.6)',
+                            pointRadius: 6,
+                            pointHoverRadius: 8,
+                        },
+                        // ClassRank 已在 calculateSubjectRanks 中保證為 number 或 'N/A'
+                        ...(typeof student.ClassRank === 'number' ? [{
+                            label: '你的成績',
+                            data: [studentPoint],
+                            backgroundColor: 'rgba(239, 68, 68, 1)', // red-500
+                            pointRadius: 10,
+                            pointHoverRadius: 12,
+                        }] : [])
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            position: 'bottom',
+                            title: { display: true, text: '加權平均分數' },
+                            min: 50,
+                            max: 100
+                        },
+                        y: {
+                            reverse: true, // 排名越小越好，所以反轉 Y 軸
+                            title: { display: true, text: '班級排名' },
+                            min: 1,
+                            max: Math.max(...allStudentData.filter(s => typeof s.ClassRank === 'number').map(s => s.ClassRank)) + 1,
+                            ticks: { stepSize: 1 }
+                        }
+                    },
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return `分數: ${context.parsed.x.toFixed(2)}, 排名: ${context.parsed.y}`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // 繪製科目分析圖表 (並同時呼叫渲染表格)
+        window.onSubjectChange = function() {
+            if (currentStudent) {
+                renderAnalysisCharts(currentStudent, document.getElementById('subject-select').value);
+            }
+        }
+
+        function renderAnalysisCharts(student, selectedSubjectKey) {
+            const classAverageScores = calculateClassAverage();
+
+            // 1. 五大主科平均比較雷達圖 (Analysis Radar Chart)
+            const labels = mainSubjects.map(sub => subjectLabels[sub]);
+            const studentScores = mainSubjects.map(sub => student[sub]);
+            const avgScores = mainSubjects.map(sub => classAverageScores[sub]);
+
+            if (analysisRadarChart) analysisRadarChart.destroy();
+            analysisRadarChart = new Chart(document.getElementById('analysis-radar-chart'), {
+                type: 'radar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: '你的成績',
+                            data: studentScores,
+                            borderColor: 'rgba(59, 130, 246, 1)',
+                            backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                            pointBackgroundColor: 'rgba(59, 130, 246, 1)',
+                        },
+                        {
+                            label: '班級平均',
+                            data: avgScores,
+                            borderColor: 'rgba(239, 68, 68, 1)',
+                            backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                            pointBackgroundColor: 'rgba(239, 68, 68, 1)',
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        r: { suggestedMin: 0, suggestedMax: 100, ticks: { backdropColor: 'rgba(240, 249, 255, 1)' } }
+                    },
+                    plugins: { legend: { position: 'top' } }
+                }
+            });
+
+            // 2. 單一科目分數分佈 (Subject Distribution Chart)
+            const subjectScores = allStudentData.map(s => s[selectedSubjectKey]);
+            const bins = [0, 60, 70, 80, 90, 101]; // [0-59], [60-69], [70-79], [80-89], [90-100]
+            const distribution = new Array(bins.length - 1).fill(0);
+            const distributionLabels = ['<60', '60-69', '70-79', '80-89', '90-100'];
+
+            subjectScores.forEach(score => {
+                for (let i = 0; i < bins.length - 1; i++) {
+                    if (score >= bins[i] && score < bins[i+1]) {
+                        distribution[i]++;
+                        break;
+                    }
+                }
+            });
+
+            const studentScore = student[selectedSubjectKey];
+            const barColors = distributionLabels.map((label, index) => {
+                const min = bins[index];
+                const max = bins[index + 1] - 1;
+                const isMaxRange = index === bins.length - 2;
+                if (studentScore >= min && (isMaxRange ? studentScore <= 100 : studentScore <= max)) {
+                    return 'rgba(59, 130, 246, 0.8)'; // Highlight bar
+                }
+                return 'rgba(147, 197, 253, 0.6)'; // Normal bar
+            });
+
+
+            if (subjectDistChart) subjectDistChart.destroy();
+            subjectDistChart = new Chart(document.getElementById('subject-dist-chart'), {
+                type: 'bar',
+                data: {
+                    labels: distributionLabels,
+                    datasets: [{
+                        label: `${subjectLabels[selectedSubjectKey]} 分數分佈 (人)`,
+                        data: distribution,
+                        backgroundColor: barColors,
+                        borderColor: 'rgba(59, 130, 246, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { beginAtZero: true, title: { display: true, text: '學生人數 (人)' } },
+                        x: { title: { display: true, text: `${subjectLabels[selectedSubjectKey]} 分數區間` } }
+                    }
+                }
+            });
+
+            // 3. NEW: 渲染科目成績和排名表格
+            renderSubjectTable(student);
+        }
+
+        function renderSubjectTable(student) {
+            const container = document.getElementById('subject-rank-table-container');
+
+            // 總排名人數 (排除導師測試帳號)
+            const totalStudents = allStudentData.filter(s => s.studentId !== '導師測試').length;
+
+            let tableHTML = `
+                <div class="overflow-x-auto rounded-lg shadow-md border border-gray-200 animate-fade-in-up delay-200ms">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-blue-50">
+                            <tr>
+                                <th class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">科目/總平均</th>
+                                <th class="px-4 sm:px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">成績/${subjectLabels['Writing']}</th>
+                                <th class="px-4 sm:px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">班級排名 (總人數 ${totalStudents})</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+            `;
+
+            allSubjects.forEach(subject => {
+                const score = student[subject];
+                // *** 修正: 從學生資料中獲取單科排名屬性 (例如: ChineseRank) ***
+                const rank = student[`${subject}Rank`]; 
+                const scoreUnit = subject === 'Writing' ? '級分' : '分';
+
+                // 排名顯示邏輯：如果 rank 是數字，則顯示數字；如果是 'N/A' 或其他非數字，則顯示 '-'
+                const rankDisplay = typeof rank === 'number' ? rank : (rank === 'N/A' ? '-' : '-');
+                
+                // 根據排名情況調整文字顏色 (排名前10名使用藍色)
+                const rankColor = (typeof rank === 'number' && rank <= 10) ? 'text-blue-600 font-bold' : 'text-gray-800';
+                
+                const scoreColor = (subject !== 'Writing' && score >= 90) ? 'text-green-600 font-bold' :
+                                   (subject !== 'Writing' && score >= 80) ? 'text-blue-600' :
+                                   (subject !== 'Writing' && score < 60) ? 'text-red-600' : 'text-gray-800';
+
+                tableHTML += `
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${subjectLabels[subject]}</td>
+                        <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-center ${scoreColor}">${score} ${scoreUnit}</td>
+                        <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-center ${rankColor}">
+                            ${rankDisplay}
+                        </td>
+                    </tr>
+                `;
+            });
+
+            // 增加總平均成績和總班級排名的特別行
+            const overallScore = student.WeightedAvg.toFixed(2);
+            const overallRank = student.ClassRank;
+            const overallRankDisplay = typeof overallRank === 'number' ? overallRank : '-';
+
+            tableHTML += `
+                <tr class="bg-indigo-100 hover:bg-indigo-200 font-bold border-t-2 border-indigo-400">
+                    <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm font-extrabold text-indigo-800">加權平均 (總成績)</td>
+                    <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-lg text-center text-indigo-800">${overallScore} 分</td>
+                    <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-lg text-center text-indigo-800">
+                        ${overallRankDisplay}
+                    </td>
+                </tr>
+            `;
+            
+            tableHTML += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            container.innerHTML = tableHTML;
+        }
+
+    </script>
+    <style>
+        /* 自定義淡藍色調 */
+        .bg-custom-blue { background-color: #F0F8FF; } /* Azure or slightly lighter than sky-100 */
+        .text-custom-blue-dark { color: #3b82f6; } /* blue-500 */
+        .border-custom-blue { border-color: #3b82f6; }
+        .card { box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); }
+        /* 隱藏密碼輸入的數字上/下箭頭 */
+        input[type=number]::-webkit-inner-spin-button,
+        input[type=number]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        /* Chart 容器確保有最小高度 */
+        .h-80 { height: 20rem; }
+        .h-96 { height: 24rem; }
+
+        /* 自定義動畫 */
+        @keyframes fade-in-up {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        @keyframes fade-out {
+            from {
+                opacity: 1;
+            }
+            to {
+                opacity: 0;
+            }
+        }
+        @keyframes fade-in-fast {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+        @keyframes fade-out-fast {
+            from {
+                opacity: 1;
+            }
+            to {
+                opacity: 0;
+            }
+        }
+
+        .animate-fade-in-up {
+            animation: fade-in-up 0.3s ease-out forwards;
+        }
+        .animate-fade-out {
+            animation: fade-out 0.3s ease-out forwards;
+        }
+        .animate-fade-in-fast {
+            animation: fade-in-fast 0.15s ease-out forwards;
+        }
+        .animate-fade-out-fast {
+            animation: fade-out-fast 0.15s ease-out forwards;
+        }
+        .delay-100ms { animation-delay: 100ms; }
+        .delay-200ms { animation-delay: 200ms; }
+        .delay-300ms { animation-delay: 300ms; }
+        .delay-400ms { animation-delay: 400ms; }
+
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen font-sans">
+
+    <div id="login-screen" class="flex items-center justify-center min-h-screen bg-custom-blue animate-fade-in-up">
+        <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-sm card">
+            <h2 class="text-3xl font-extrabold text-gray-800 text-center mb-6">
+                <span class="text-blue-500">成績</span>查詢系統
+            </h2>
+            <div class="mb-4">
+                <label for="password-input" class="block text-sm font-medium text-gray-700 mb-1">查詢密碼 (6位數)</label>
+                <input type="number" id="password-input" placeholder="請輸入6位數密碼"
+                       class="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-150"
+                       maxlength="6"
+                       oninput="if(this.value.length > this.maxLength) this.value = this.value.slice(0, this.maxLength);"
+                >
+            </div>
+            <p id="login-error" class="text-red-500 text-sm mb-4 hidden"></p>
+            <button onclick="handleLogin()"
+                    class="w-full bg-blue-500 text-white py-2.5 rounded-lg font-semibold hover:bg-blue-600 transition duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 shadow-md hover:shadow-lg">
+                登入查詢
+            </button>
+            <p class="text-xs text-gray-500 text-center mt-4">導師測試密碼：000000</p>
+        </div>
+    </div>
+
+    <div id="dashboard" class="hidden bg-custom-blue p-4 sm:p-8">
+        <div class="max-w-7xl mx-auto">
+            
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 p-4 bg-white rounded-xl shadow-lg animate-fade-in-up delay-100ms">
+                <h1 class="text-2xl sm:text-3xl font-bold text-gray-800">
+                    <span id="student-info" class="text-blue-500">學生</span>成績儀表板
+                </h1>
+                <button onclick="handleLogout()"
+                        class="mt-4 sm:mt-0 px-4 py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition duration-200">
+                    登出
+                </button>
+            </div>
+
+            
+            <div class="flex mb-6 bg-white rounded-xl shadow-lg p-2 animate-fade-in-up delay-200ms">
+                <button id="overview-tab-btn" onclick="changeTab('overview')"
+                        class="flex-1 py-3 px-4 rounded-lg font-medium bg-blue-500 text-white transition duration-200">
+                    儀表板總覽
+                </button>
+                <button id="analysis-tab-btn" onclick="changeTab('analysis')"
+                        class="flex-1 py-3 px-4 rounded-lg font-medium text-blue-500 hover:bg-blue-100 transition duration-200 ml-2">
+                    科目分析
+                </button>
+            </div>
+
+            
+            <div id="overview-content" class="space-y-6">
+                
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    
+                    <div class="bg-white p-6 rounded-xl card border-b-4 border-blue-500">
+                        <p class="text-sm font-medium text-gray-500">加權平均分數</p>
+                        <p id="overall-avg" class="mt-1 text-4xl font-extrabold text-blue-500">--</p>
+                        <p class="text-xs text-gray-500 mt-2">（總和 / 18）</p>
+                    </div>
+                    
+                    <div class="bg-white p-6 rounded-xl card border-b-4 border-green-500">
+                        <p class="text-sm font-medium text-gray-500">班級平均分數 (整體)</p>
+                        <p id="class-avg-stat" class="mt-1 text-4xl font-extrabold text-green-500">--</p>
+                        <p class="text-xs text-gray-500 mt-2">（供參考）</p>
+                    </div>
+                    
+                    <div class="bg-white p-6 rounded-xl card border-b-4 border-yellow-500">
+                        <p class="text-sm font-medium text-gray-500">總班級排名</p>
+                        <p id="rank-stat" class="mt-1 text-4xl font-extrabold text-yellow-500">--</p>
+                        <p class="text-xs text-gray-500 mt-2">（排名越小越好）</p>
+                    </div>
+                </div>
+
+                
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    
+                    <div class="lg:col-span-2 bg-white p-6 rounded-xl card animate-fade-in-up delay-300ms">
+                        <h3 class="text-xl font-semibold text-gray-800 mb-4">個人成績 vs. 班級平均 (五大主科)</h3>
+                        <div class="h-80">
+                            <canvas id="personal-radar-chart"></canvas>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-white p-6 rounded-xl card animate-fade-in-up delay-400ms">
+                        <h3 class="text-xl font-semibold text-gray-800 mb-4">班級寫作分佈</h3>
+                        <div class="h-80">
+                            <canvas id="writing-dist-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                
+                <div class="bg-white p-6 rounded-xl card animate-fade-in-up delay-500ms">
+                    <h3 class="text-xl font-semibold text-gray-800 mb-4">加權平均分數散佈圖 (排名 vs. 分數)</h3>
+                    <div class="h-96">
+                        <canvas id="weighted-scatter-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            
+            <div id="analysis-content" class="hidden space-y-6">
+                
+                <div class="bg-white p-6 rounded-xl card animate-fade-in-up delay-100ms">
+                    <h3 class="text-xl font-semibold text-gray-800 mb-4">個人科目成績與班級排名細項</h3>
+                    <div id="subject-rank-table-container">
+                        <!-- 科目成績與排名表格將在此處渲染 -->
+                    </div>
+                    <p class="text-xs text-gray-500 mt-4">註：單科排名和總平均排名為相對排名，總人數為 30 位學生。</p>
+                </div>
+
+                
+                <div class="bg-white p-6 rounded-xl card animate-fade-in-up delay-200ms">
+                    <h3 class="text-xl font-semibold text-gray-800 mb-4">五大主科表現比較 (雷達圖)</h3>
+                    <p class="text-sm text-gray-600 mb-4">此圖比較您在五大主科的表現與班級整體平均的差異。</p>
+                    <div class="h-96">
+                        <canvas id="analysis-radar-chart"></canvas>
+                    </div>
+                </div>
+
+                
+                <div class="bg-white p-6 rounded-xl card animate-fade-in-up delay-300ms">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-xl font-semibold text-gray-800">單一科目分數分佈</h3>
+                        <select id="subject-select" onchange="onSubjectChange()"
+                                class="px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                            <option value="Chinese">國文</option>
+                            <option value="Math">數學</option>
+                            <option value="English">英文</option>
+                            <option value="Science">自然</option>
+                            <option value="Social">社會</option>
+                        </select>
+                    </div>
+                    <p class="text-sm text-gray-600 mb-4">此圖顯示您所選科目在班級中的分數區間分佈，藍色條代表您所在的分數區間。</p>
+                    <div class="h-96">
+                        <canvas id="subject-dist-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
